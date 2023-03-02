@@ -28,16 +28,14 @@ from click import MissingParameter, BadParameter
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 
-API_URL = "https://api.openai.com/v1/completions"
+API_URL = "https://api.openai.com/v1/chat/completions"
 DATA_FOLDER = os.path.expanduser("~/.config")
 KEY_FILE = Path(DATA_FOLDER) / "shell-gpt" / "api_key.txt"
 
 
 # pylint: disable=invalid-name
 class Model(str, Enum):
-    davinci = "text-davinci-003"
-    curie = "text-curie-001"
-    codex = "code-davinci-002"
+    gpt_turbo = "gpt-3.5-turbo"
 
     def __str__(self):
         return self.name
@@ -89,18 +87,15 @@ def get_edited_prompt():
 
 
 @loading_spinner
-def openai_request(prompt, model, max_tokens, api_key, temperature, top_p):
+def openai_request(prompt, model, api_key):
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
     data = {
-        "prompt": prompt,
         "model": model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "top_p": top_p,
+        "messages": [{"role": "system", "content": "Bash Linux terminal assistant"}, {"role": "user", "content": prompt}]
     }
     response = requests.post(API_URL, headers=headers, json=data, timeout=180)
     response.raise_for_status()
-    return response.json()["choices"][0]["text"]
+    return response.json()["choices"][0]["message"]["content"]
 
 
 def typer_writer(text, code, shell, animate):
@@ -119,24 +114,18 @@ def typer_writer(text, code, shell, animate):
 # Using lambda to pass a function to default value, which make it appear as "dynamic" in help.
 def main(
     prompt: str = typer.Argument(None, show_default=False, help="The prompt to generate completions for."),
-    model: Model = typer.Option("davinci", help="GPT-3 model name.", show_choices=True),
-    max_tokens: int = typer.Option(lambda: 2048, help="Strict length of output (words)."),
-    temperature: float = typer.Option(lambda: 1.0, min=0.0, max=1.0, help="Randomness of generated output."),
-    top_probability: float = typer.Option(lambda: 1.0, min=0.1, max=1.0, help="Limits highest probable tokens."),
+    model: Model = typer.Option("gpt_turbo", help="GPT-3 model name.", show_choices=True),
     shell: bool = typer.Option(False, "--shell", "-s", help="Provide shell command as output."),
     execute: bool = typer.Option(False, "--execute", "-e", help="Will execute --shell command."),
     code: bool = typer.Option(False, help="Provide code as output."),
     editor: bool = typer.Option(False, help="Open $EDITOR to provide a prompt."),
-    animation: bool = typer.Option(True, help="Typewriter animation."),
+    animation: bool = typer.Option(False, help="Typewriter animation."),
     spinner: bool = typer.Option(True, help="Show loading spinner during API request."),
 ):
     api_key = get_api_key()
     if not prompt and not editor:
         raise MissingParameter(param_hint="PROMPT", param_type="string")
     if shell:
-        # If default values where not changed, make it more accurate.
-        if temperature == 1.0 == top_probability:
-            temperature, top_probability = 0.2, 1.0
         current_shell = "PowerShell" if platform.system() == "Windows" else "Bash"
         prompt = f"""
         Context: Provide only {current_shell} command as output.
@@ -144,20 +133,15 @@ def main(
         Command:
         """
     elif code:
-        # If default values where not changed, make output more creative (diverse).
-        if temperature == 1.0 == top_probability:
-            temperature, top_probability = 0.8, 0.2
         prompt = f"""
         Context: Provide only code as output.
         Prompt: {prompt}
         Code:
         """
-    # Curie has hard cap 2048 + prompt.
-    if model == "text-curie-001" and max_tokens == 2048:
-        max_tokens = 1024
+    model = 'gpt-3.5-turbo'
     if editor:
         prompt = get_edited_prompt()
-    response_text = openai_request(prompt, model, max_tokens, api_key, temperature, top_probability, spinner=spinner)
+    response_text = openai_request(prompt, model, api_key, spinner=spinner)
     # For some reason OpenAI returns several leading/trailing white spaces.
     response_text = response_text.strip()
     typer_writer(response_text, code, shell, animation)
